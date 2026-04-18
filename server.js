@@ -21,9 +21,17 @@ const getHeaders = () => ({
 });
 
 async function hiboutikGet(path) {
-  const res = await fetch(`${HIBOUTIK_BASE}${path}`, { headers: getHeaders() });
-  if (!res.ok) throw new Error(`Hiboutik GET ${path} -> ${res.status}`);
-  return res.json();
+  try {
+    const res = await fetch(`${HIBOUTIK_BASE}${path}`, {
+      headers: getHeaders(),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) throw new Error(`Hiboutik GET ${path} -> ${res.status}`);
+    return res.json();
+  } catch (e) {
+    console.error(`hiboutikGet error on ${path}:`, e.message);
+    throw e;
+  }
 }
 
 async function hiboutikGetAll(path) {
@@ -39,14 +47,19 @@ async function hiboutikGetAll(path) {
   return results;
 }
 
+// --- SANTE ---
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "Barbavape API" });
 });
 
+// --- DIAGNOSTIC ---
 app.get("/api/test-hiboutik", async (req, res) => {
   try {
     const url = `${HIBOUTIK_BASE}/customers/`;
-    const response = await fetch(url, { headers: getHeaders() });
+    const response = await fetch(url, {
+      headers: getHeaders(),
+      signal: AbortSignal.timeout(15000),
+    });
     const text = await response.text();
     res.json({
       status: response.status,
@@ -61,66 +74,51 @@ app.get("/api/test-hiboutik", async (req, res) => {
   }
 });
 
+// --- CLIENTS (sans ventes — chargement rapide) ---
 app.get("/api/clients", async (req, res) => {
   try {
     const customers = await hiboutikGetAll("/customers/");
-    const enriched = await Promise.all(customers.map(async (c) => {
-      try {
-        const sales = await hiboutikGetAll(`/sales/?customer_id=${c.customers_id}`);
-        const purchases = sales.map((s) => ({
-          saleId: s.sale_id,
-          date: s.completed_at || s.sale_date,
-          amount: parseFloat(s.amount_with_tax || 0),
-          storeId: s.store_id,
-        }));
-        const points = Math.floor(purchases.reduce((sum, p) => sum + p.amount, 0));
-        const storeCounts = {};
-        purchases.forEach(p => {
-          const key = STORE_MAP[p.storeId] || "chateau";
-          storeCounts[key] = (storeCounts[key] || 0) + 1;
-        });
-        const mainStore = Object.entries(storeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "chateau";
-        return {
-          id: c.customers_id,
-          name: `${c.first_name} ${c.last_name}`.trim(),
-          phone: c.phone || "",
-          email: c.email || "",
-          messenger: "",
-          preferredChannel: "sms",
-          store: mainStore,
-          points,
-          welcomeGiven: points > 0,
-          purchases: purchases.map(p => ({
-            date: p.date ? p.date.substring(0, 10) : "",
-            amount: p.amount,
-            product: `Vente #${p.saleId}`,
-          })),
-          preferences: [],
-          cigsBefore: 0,
-          cigsNow: 0,
-          quitDate: "",
-          prixPaquet: 11,
-        };
-      } catch {
-        return null;
-      }
+    const clients = customers.map((c) => ({
+      id: c.customers_id,
+      name: `${c.first_name} ${c.last_name}`.trim(),
+      phone: c.phone || "",
+      email: c.email || "",
+      messenger: "",
+      preferredChannel: "sms",
+      store: "chateau",
+      points: Math.floor(parseFloat(c.turnover || 0)),
+      welcomeGiven: parseFloat(c.turnover || 0) > 0,
+      purchases: [],
+      preferences: [],
+      cigsBefore: 0,
+      cigsNow: 0,
+      quitDate: "",
+      prixPaquet: 11,
     }));
-    res.json(enriched.filter(Boolean));
+    res.json(clients);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
 });
 
+// --- VENTES D'UN CLIENT (chargées à la demande) ---
 app.get("/api/clients/:id/sales", async (req, res) => {
   try {
     const sales = await hiboutikGetAll(`/sales/?customer_id=${req.params.id}`);
-    res.json(sales);
+    const purchases = sales.map((s) => ({
+      date: s.completed_at ? s.completed_at.substring(0, 10) : (s.sale_date || "").substring(0, 10),
+      amount: parseFloat(s.amount_with_tax || 0),
+      product: `Vente #${s.sale_id}`,
+      store: STORE_MAP[s.store_id] || "chateau",
+    }));
+    res.json(purchases);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// --- WEBHOOK VENTE ---
 app.post("/api/webhook/sale", async (req, res) => {
   try {
     const { sale_id } = req.body;
