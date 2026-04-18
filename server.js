@@ -39,12 +39,10 @@ async function hiboutikGetAll(path) {
   return results;
 }
 
-// --- SANTE ---
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "Barbavape API" });
 });
 
-// --- DIAGNOSTIC ---
 app.get("/api/test-hiboutik", async (req, res) => {
   try {
     const url = `${HIBOUTIK_BASE}/customers/`;
@@ -63,7 +61,6 @@ app.get("/api/test-hiboutik", async (req, res) => {
   }
 });
 
-// --- CLIENTS ---
 app.get("/api/clients", async (req, res) => {
   try {
     const customers = await hiboutikGetAll("/customers/");
@@ -85,11 +82,11 @@ app.get("/api/clients", async (req, res) => {
         const mainStore = Object.entries(storeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "chateau";
         return {
           id: c.customers_id,
-          name: `${c.customers_first_name} ${c.customers_last_name}`.trim(),
-          phone: c.customers_phone_number || "",
-          email: c.customers_email || "",
-          messenger: c.customers_note || "",
-          preferredChannel: c.customers_second_phone || "sms",
+          name: `${c.first_name} ${c.last_name}`.trim(),
+          phone: c.phone || "",
+          email: c.email || "",
+          messenger: "",
+          preferredChannel: "sms",
           store: mainStore,
           points,
           welcomeGiven: points > 0,
@@ -115,7 +112,6 @@ app.get("/api/clients", async (req, res) => {
   }
 });
 
-// --- VENTES D'UN CLIENT ---
 app.get("/api/clients/:id/sales", async (req, res) => {
   try {
     const sales = await hiboutikGetAll(`/sales/?customer_id=${req.params.id}`);
@@ -125,7 +121,6 @@ app.get("/api/clients/:id/sales", async (req, res) => {
   }
 });
 
-// --- WEBHOOK VENTE ---
 app.post("/api/webhook/sale", async (req, res) => {
   try {
     const { sale_id } = req.body;
